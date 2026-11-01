@@ -1,0 +1,49 @@
+name: Build PC
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'vpnhub-pc.zip'
+      - '.github/workflows/build-pc.yml'
+env:
+  SINGBOX_VER: 1.11.4
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack project if uploaded as zip
+        shell: pwsh
+        run: |
+          if (Test-Path vpnhub-pc.zip) { Expand-Archive -Path vpnhub-pc.zip -DestinationPath . -Force }
+          Get-ChildItem pc
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Download sing-box core
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force pc/core | Out-Null
+          $u = "https://github.com/SagerNet/sing-box/releases/download/v$env:SINGBOX_VER/sing-box-$env:SINGBOX_VER-windows-amd64.zip"
+          Invoke-WebRequest -Uri $u -OutFile sb.zip
+          Expand-Archive sb.zip -DestinationPath sb -Force
+          $exe = Get-ChildItem sb -Recurse -Filter sing-box.exe | Select-Object -First 1
+          Copy-Item $exe.FullName pc/core/vpnhub-core.exe
+          Get-ChildItem sb -Recurse -Filter *.dll | ForEach-Object { Copy-Item $_.FullName pc/core/ }
+          try {
+            Invoke-WebRequest -Uri https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile wintun.zip
+            Expand-Archive wintun.zip -DestinationPath wintun -Force
+            Copy-Item wintun/wintun/bin/amd64/wintun.dll pc/core/wintun.dll
+          } catch { Write-Host "wintun skipped: $_" }
+          Get-ChildItem pc/core
+      - name: Build exe
+        working-directory: pc
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npm install --no-audit --no-fund
+          npx electron-builder --win portable --x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VpnHub-PC
+          path: pc/dist/*.exe
