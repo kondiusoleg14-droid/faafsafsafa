@@ -3,6 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main, master]
+    paths-ignore:
+      - 'vpnhub-pc*.zip'
+      - '.github/workflows/build-pc.yml'
 env:
   SINGBOX_TAG: v1.11.4
 jobs:
@@ -10,9 +13,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Unpack project if uploaded as zip
+        with:
+          fetch-depth: 0
+      - name: Unpack the newest vpnhub*.zip (not the PC one)
         run: |
-          if [ -f vpnhub.zip ]; then unzip -o vpnhub.zip -d . ; fi
+          best=""; bt=-1
+          for f in vpnhub*.zip; do
+            [ -f "$f" ] || continue
+            case "$f" in vpnhub-pc*) continue;; esac
+            t=$(git log -1 --format=%ct -- "$f" 2>/dev/null); t=${t:-0}
+            echo "found $f (commit time $t)"
+            if [ "$t" -ge "$bt" ]; then bt=$t; best="$f"; fi
+          done
+          if [ -n "$best" ]; then echo "USING $best"; unzip -o "$best" -d . ; else echo "no vpnhub*.zip found"; fi
           ls -la
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
