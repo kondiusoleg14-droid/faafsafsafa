@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'vpnhub-pc*.zip'
+      - '*.zip'
       - '.github/workflows/build-pc.yml'
 env:
   SINGBOX_VER: 1.11.4
@@ -14,17 +14,29 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Unpack the newest vpnhub-pc*.zip
+      - name: Unpack the newest SOURCE zip (the one that contains pc/package.json)
         shell: pwsh
         run: |
-          $best = $null; $bt = [int64]-1
-          foreach ($f in Get-ChildItem -File -Filter 'vpnhub-pc*.zip') {
-            $t = (git log -1 --format=%ct -- $f.Name) | Select-Object -First 1
-            $ts = 0; if ($t) { $ts = [int64]$t }
-            Write-Host "found $($f.Name) (commit time $ts)"
-            if ($ts -ge $bt) { $bt = $ts; $best = $f }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $cands = Get-ChildItem -File -Filter '*.zip' | ForEach-Object {
+            $t = (git log -1 --format=%ct -- $_.Name) | Select-Object -First 1
+            [pscustomobject]@{ File = $_; Ts = $(if ($t) { [int64]$t } else { 0 }) }
+          } | Sort-Object Ts -Descending
+          $used = $null
+          foreach ($c in $cands) {
+            $z = [IO.Compression.ZipFile]::OpenRead($c.File.FullName)
+            $ok = $false
+            foreach ($e in $z.Entries) { if (($e.FullName -replace '\\', '/') -eq 'pc/package.json') { $ok = $true; break } }
+            $z.Dispose()
+            Write-Host ("found {0}: source={1} (commit time {2})" -f $c.File.Name, $ok, $c.Ts)
+            if ($ok -and -not $used) { $used = $c.File }
           }
-          if ($best) { Write-Host "USING $($best.Name)"; Expand-Archive -LiteralPath $best.FullName -DestinationPath . -Force } else { Write-Host 'No vpnhub-pc*.zip found' }
+          if (-not $used) {
+            Write-Host '::error::Не найден архив с исходниками (внутри должна быть папка pc). Загружай vpnhub-pc.zip из чата, а не готовую сборку из Artifacts.'
+            exit 1
+          }
+          Write-Host "USING $($used.Name)"
+          Expand-Archive -LiteralPath $used.FullName -DestinationPath . -Force
           Get-ChildItem pc
       - uses: actions/setup-node@v4
         with:
