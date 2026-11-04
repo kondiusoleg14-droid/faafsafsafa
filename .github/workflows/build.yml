@@ -3,9 +3,6 @@ on:
   workflow_dispatch:
   push:
     branches: [main, master]
-    paths-ignore:
-      - 'vpnhub-pc*.zip'
-      - '.github/workflows/build-pc.yml'
 env:
   SINGBOX_TAG: v1.11.4
 jobs:
@@ -15,17 +12,20 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Unpack the newest vpnhub*.zip (not the PC one)
+      - name: Unpack the newest SOURCE zip (the one that contains app/build.gradle.kts)
         run: |
           best=""; bt=-1
-          for f in vpnhub*.zip; do
+          for f in *.zip; do
             [ -f "$f" ] || continue
-            case "$f" in vpnhub-pc*) continue;; esac
-            t=$(git log -1 --format=%ct -- "$f" 2>/dev/null); t=${t:-0}
-            echo "found $f (commit time $t)"
-            if [ "$t" -ge "$bt" ]; then bt=$t; best="$f"; fi
+            if unzip -Z1 "$f" 2>/dev/null | grep -qx 'app/build.gradle.kts'; then
+              t=$(git log -1 --format=%ct -- "$f" 2>/dev/null); t=${t:-0}
+              echo "found source zip: $f (commit time $t)"
+              if [ "$t" -ge "$bt" ]; then bt=$t; best="$f"; fi
+            else
+              echo "skip (not a source zip): $f"
+            fi
           done
-          if [ -n "$best" ]; then echo "USING $best"; unzip -o "$best" -d . ; else echo "no vpnhub*.zip found"; fi
+          if [ -n "$best" ]; then echo "USING $best"; unzip -o "$best" -d . ; else echo "no source zip found"; fi
           ls -la
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
