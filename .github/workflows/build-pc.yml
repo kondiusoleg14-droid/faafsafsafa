@@ -1,49 +1,55 @@
-name: Build PC
+name: Build APK
 on:
   workflow_dispatch:
   push:
-    paths:
-      - 'vpnhub-pc.zip'
+    branches: [main, master]
+    paths-ignore:
+      - 'vpnhub-pc*.zip'
       - '.github/workflows/build-pc.yml'
 env:
-  SINGBOX_VER: 1.11.4
+  SINGBOX_TAG: v1.11.4
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Unpack project if uploaded as zip
-        shell: pwsh
-        run: |
-          if (Test-Path vpnhub-pc.zip) { Expand-Archive -Path vpnhub-pc.zip -DestinationPath . -Force }
-          Get-ChildItem pc
-      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      - name: Download sing-box core
-        shell: pwsh
+          fetch-depth: 0
+      - name: Unpack the newest vpnhub*.zip (not the PC one)
         run: |
-          New-Item -ItemType Directory -Force pc/core | Out-Null
-          $u = "https://github.com/SagerNet/sing-box/releases/download/v$env:SINGBOX_VER/sing-box-$env:SINGBOX_VER-windows-amd64.zip"
-          Invoke-WebRequest -Uri $u -OutFile sb.zip
-          Expand-Archive sb.zip -DestinationPath sb -Force
-          $exe = Get-ChildItem sb -Recurse -Filter sing-box.exe | Select-Object -First 1
-          Copy-Item $exe.FullName pc/core/vpnhub-core.exe
-          Get-ChildItem sb -Recurse -Filter *.dll | ForEach-Object { Copy-Item $_.FullName pc/core/ }
-          try {
-            Invoke-WebRequest -Uri https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile wintun.zip
-            Expand-Archive wintun.zip -DestinationPath wintun -Force
-            Copy-Item wintun/wintun/bin/amd64/wintun.dll pc/core/wintun.dll
-          } catch { Write-Host "wintun skipped: $_" }
-          Get-ChildItem pc/core
-      - name: Build exe
-        working-directory: pc
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          best=""; bt=-1
+          for f in vpnhub*.zip; do
+            [ -f "$f" ] || continue
+            case "$f" in vpnhub-pc*) continue;; esac
+            t=$(git log -1 --format=%ct -- "$f" 2>/dev/null); t=${t:-0}
+            echo "found $f (commit time $t)"
+            if [ "$t" -ge "$bt" ]; then bt=$t; best="$f"; fi
+          done
+          if [ -n "$best" ]; then echo "USING $best"; unzip -o "$best" -d . ; else echo "no vpnhub*.zip found"; fi
+          ls -la
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.23' }
+      - name: Build libbox (sing-box core for Android)
         run: |
-          npm install --no-audit --no-fund
-          npx electron-builder --win portable --x64
+          git clone --depth 1 --branch "$SINGBOX_TAG" https://github.com/SagerNet/sing-box.git /tmp/sing-box
+          cd /tmp/sing-box
+          GM=$(grep -o 'gomobile/cmd/gomobile@v[0-9.]*' Makefile | head -1)
+          GB=$(grep -o 'gomobile/cmd/gobind@v[0-9.]*' Makefile | head -1)
+          go install -v github.com/sagernet/$GM
+          go install -v github.com/sagernet/$GB
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          export ANDROID_HOME="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          echo "NDK: $ANDROID_NDK_HOME"
+          go run ./cmd/internal/build_libbox -target android
+          mkdir -p "$GITHUB_WORKSPACE/app/libs"
+          cp libbox.aar "$GITHUB_WORKSPACE/app/libs/libbox.aar"
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.9' }
+      - name: Build APK
+        run: gradle assembleDebug --no-daemon --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: VpnHub-PC
-          path: pc/dist/*.exe
+          name: VpnHub-apk
+          path: app/build/outputs/apk/debug/*.apk
