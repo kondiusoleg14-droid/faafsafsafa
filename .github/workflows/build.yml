@@ -3,6 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main, master]
+    tags-ignore: ['**']
+permissions:
+  contents: write
 env:
   SINGBOX_TAG: v1.11.4
 jobs:
@@ -45,6 +48,8 @@ jobs:
           go run ./cmd/internal/build_libbox -target android
           mkdir -p "$GITHUB_WORKSPACE/app/libs"
           cp libbox.aar "$GITHUB_WORKSPACE/app/libs/libbox.aar"
+      - name: Stamp build id
+        run: echo "BUILD_ID=$(date -u +%Y%m%d-%H%M)" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.9' }
       - name: Build APK
@@ -53,3 +58,11 @@ jobs:
         with:
           name: VpnHub-apk
           path: app/build/outputs/apk/debug/*.apk
+      - name: Publish release (for auto-update inside the app)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "{\"id\":\"$BUILD_ID\"}" > latest.json
+          cp app/build/outputs/apk/debug/app-debug.apk app-debug.apk
+          gh release delete android-latest --yes --cleanup-tag || true
+          gh release create android-latest app-debug.apk latest.json --title "Android build $BUILD_ID" --notes "Автосборка для автообновления в приложении" --target "${{ github.sha }}"
