@@ -2,9 +2,12 @@ name: Build PC
 on:
   workflow_dispatch:
   push:
+    tags-ignore: ['**']
     paths:
       - '*.zip'
       - '.github/workflows/build-pc.yml'
+permissions:
+  contents: write
 env:
   SINGBOX_VER: 1.11.4
 jobs:
@@ -38,6 +41,12 @@ jobs:
           Write-Host "USING $($used.Name)"
           Expand-Archive -LiteralPath $used.FullName -DestinationPath . -Force
           Get-ChildItem pc
+      - name: Stamp build id
+        shell: pwsh
+        run: |
+          $id = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmm')
+          "BUILD_ID=$id" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Set-Content -Path pc/build-id.json -Value ('{"id":"' + $id + '"}') -Encoding ascii
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -68,3 +77,11 @@ jobs:
         with:
           name: VpnHub-PC
           path: pc/dist/*.exe
+      - name: Publish release (for auto-update inside the app)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Set-Content -Path latest-pc.json -Value ('{"id":"' + $env:BUILD_ID + '"}') -Encoding ascii
+          gh release delete pc-latest --yes --cleanup-tag
+          gh release create pc-latest "pc/dist/VPN-Hub-portable.exe" latest-pc.json --title "PC build $env:BUILD_ID" --notes "Автосборка для автообновления в приложении" --target "${{ github.sha }}"
